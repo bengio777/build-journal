@@ -1,0 +1,13 @@
+{
+  "name": "build-journal",
+  "version": "1.0.0",
+  "description": "Auto-captures build metadata during coding sessions and generates tiered retrospective documents. Writes to project repo, central archive, Notion, and Google Sheets.",
+  "author": {
+    "name": "Ben Giordano",
+    "email": "bengio777@gmail.com"
+  },
+  "repository": "https://github.com/bengio777/build-journal",
+  "keywords": ["journal", "retrospective", "build-log", "documentation"],
+  "skills": "./skills/",
+  "hooks": "./hooks/"
+}
