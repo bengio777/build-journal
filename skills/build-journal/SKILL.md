@@ -3,10 +3,14 @@ name: build-journal
 description: >
   Generate a build journal retrospective for the current project. Use this skill
   when the user says "build journal", "generate retrospective", "log this build",
-  "capture this session", "closing out this session", "project is done", "wrapping
-  up the build", "done for the day", "pausing work", "picking this up tomorrow",
+  "capture this session", "start build journal", "activate build journal",
+  "build journal on", "track this build", "let's document this session",
+  "I want to journal this", "let's capture what we're building",
+  "closing out this session", "project is done", "wrapping up the build",
+  "session complete", "done for the day", "pausing work", "picking this up tomorrow",
   "stopping for now", or any clear signal that a build session or workday is ending.
   Also trigger when the user explicitly requests a build journal entry.
+  The /build-journal slash command is the primary explicit entry point.
 ---
 
 # Build Journal
@@ -28,6 +32,10 @@ Determine which mode based on the user's language:
 - "done for the day", "pausing work", "picking this up tomorrow", "stopping for now"
 - Runs a 2-3 minute rapid-fire Q&A
 - Generates a lighter daily entry
+
+The `/build-journal` slash command is the primary explicit entry point and fires the
+activation flow directly. Natural language triggers and wrap-up signals also activate
+this skill. Wrap-up signals always fire whether or not tracking was activated earlier.
 
 If ambiguous, ask: "Are you wrapping up the project, or just pausing for today?"
 
