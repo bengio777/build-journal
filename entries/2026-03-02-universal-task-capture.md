@@ -1,29 +1,45 @@
-# Universal Task Capture: Cloud Run Deployment
-## Build Journal Entry — Full Retrospective (Standard)
+# Universal Task Capture: Cloud Run Debugging & Deploy Pipeline Fix
+## Build Journal Entry — Standard
 
 **Builder:** Ben Giordano
 **Date:** 2026-03-02
 **Repo:** https://github.com/bengio777/universal-task-capture
-**Status:** In Progress — Service deployed, 500 on root route under diagnosis
+**Status:** Complete — Service live, Cloud Build pipeline operational
 **Tier:** Standard
 
 ---
 
 ## 1. Problem Statement
 
-Build and deploy a personal task capture system with a web UI to Google Cloud Run. The system allows capturing tasks via a FastAPI + HTMX frontend, classifies them using a Google ADK agent powered by Gemini, and routes them to the correct Notion database across 9 task categories. The goal: replace manual copy-paste task entry with a single URL that handles intake, classification, and storage.
+The `task-capture-ui` service on Cloud Run had never successfully served a request — every hit returned 500. Separately, the Cloud Build source-based deploy pipeline had been silently broken since the initial deploy, forcing all future changes to require a local Docker build workflow.
+
+Two independent problems: a broken service, and a broken deploy pipeline.
 
 ---
 
 ## 2. Solution
 
-A single Cloud Run service running FastAPI + Jinja2 + HTMX. The ADK agent (Google Gen AI + Gemini) is imported as a Python module and called in-process via the Runner API — no inter-service HTTP. Notion is queried directly at runtime (no SQLite cache). Docker image built locally with `buildx` targeting `linux/amd64` and pushed to Artifact Registry, then deployed via `gcloud run deploy`.
+**Service (500 → 200):**
+1. Diagnosed root cause via Cloud Run logs: `notion-client` v3 removed `databases.query()` — pinned to `==2.2.1` which still has the proven API
+2. After pinning, new error: Notion API returning 404 for all 9 database IDs — confirmed all IDs were stale (databases had been recreated and config was never updated)
+3. Used Notion MCP to look up all 9 live database IDs and updated `databases.py`
 
-**Service URL:** https://task-capture-ui-370032337595.us-central1.run.app
+**Deploy Pipeline:**
+1. Added `.gcloudignore` to exclude `.venv` (653MB) from source uploads — reduced upload from ~653MB to 42KB
+2. Added `cloudbuild.yaml` with `E2_HIGHCPU_8` machine type
+3. Discovered `gcloud run deploy --source` ignores `cloudbuild.yaml` — switched to `gcloud builds submit --config`
+4. Fixed 3 IAM permission gaps on the compute service account (GCP's new default for Cloud Build in modern projects)
 
 ---
 
 ## 3. Architecture
+
+No architectural changes. Same stack as deployed:
+- FastAPI + HTMX frontend on Cloud Run (`us-central1`)
+- Notion as task database backend (9 topic databases)
+- `google-adk` Runner for Quick Capture (in-process agent)
+- Artifact Registry (`cloud-run-source-deploy`) for images
+- Cloud Build (`E2_HIGHCPU_8`) for CI/CD via `gcloud builds submit`
 
 ```
 Browser
@@ -34,64 +50,68 @@ Browser
               └── app/main.py           → Routes + Jinja2 templates
 ```
 
-**Key decisions:**
-- Single Cloud Run service (not microservices) — ADK tools imported as Python, not HTTP
-- HTMX over React — no JS build pipeline, server-rendered, fits Python stack
-- Notion queried directly — 500ms latency acceptable for personal tool, no SQLite cache needed
-- `linux/amd64` built locally with `docker buildx --push` — bypasses Cloud Build entirely
-- GCP project `task-capture-bg` (created new) — cleaner than reusing `gen-lang-client-*`
-
 ---
 
 ## 4. Component Specifications
 
-| Component | File | Description |
-|-----------|------|-------------|
-| Notion CRUD client | `app/notion_client.py` | list, update, edit, archive across 9 databases |
-| ADK agent runner | `app/agent_runner.py` | Wraps Google ADK Runner for quick-capture classification |
-| FastAPI routes | `app/main.py` | GET /, POST /tasks, POST /tasks/manual, PATCH/PUT/DELETE /tasks/{id} |
-| HTMX UI | `app/templates/` | base layout, task list, task row, edit form, manual create |
-| Dockerfile | `google-adk/Dockerfile` | python:3.12-slim + build-essential for C extensions |
-| Requirements | `google-adk/requirements.txt` | notion-client pinned to ==2.7.0 |
+### `google-adk/requirements.txt`
+- Pinned `notion-client==2.2.1` — last version with `databases.query()` at `/databases/{id}/query`
 
-**Dependency pins:**
-- `notion-client==2.7.0` — v3.0.0 broke `databases.query()` silently; pinned after diagnosing 500 on first deploy
+### `google-adk/task_capture_agent/config/databases.py`
+- Updated all 9 `data_source_id` values to match current Notion workspace
+- Also corrected `MASTER_DB_ID` and `NEEDS_SORTING_DB_ID`
+
+### `google-adk/.gcloudignore`
+- Excludes `.venv`, `__pycache__`, `.pytest_cache`, `.adk`, `tests/`, `.env` from Cloud Build source uploads
+
+### `google-adk/cloudbuild.yaml`
+- 3-step pipeline: docker build → docker push → gcloud run deploy
+- `E2_HIGHCPU_8` machine type to handle large image push (~3GB due to `google-adk` deps)
+- `CLOUD_LOGGING_ONLY` to avoid Cloud Storage log duplication
+
+### GCP IAM (project: `task-capture-bg`)
+- Added `roles/artifactregistry.writer` to compute SA
+- Added `roles/run.developer` to compute SA
+- Added `roles/iam.serviceAccountUser` on compute SA to itself
 
 ---
 
 ## 5. Lessons Learned
 
-### Pin dependency versions before deploying
-`notion-client` released v3.0.0 which silently broke `databases.query()`. Floating versions in `requirements.txt` caused a runtime 500 that was invisible until Cloud Run logs were checked. **Rule: pin all non-trivial dependencies before the first deploy.**
+1. **`gcloud run deploy --source` ignores `cloudbuild.yaml`** — use `gcloud builds submit --config=path/cloudbuild.yaml` to use a custom build config. The source deploy always generates its own config.
 
-### Test the delivery mechanism before building features
-The full app was built before the Cloud Run deploy path was validated. Cloud Build failures, IAM permission issues, and org policy restrictions consumed multiple sessions. **Rule: deploy a hello-world container on day 1. Don't write features until the pipeline works.**
+2. **"Retry budget exhausted" in Cloud Build is misleading** — it was masking a clean `permission denied` on every push attempt. The real error only surfaced when using `gcloud builds submit` directly.
 
-### Use local `docker buildx` over Cloud Build for personal projects
-Cloud Build added IAM complexity with no benefit for a personal project. Local `buildx --platform linux/amd64 --push` is simpler, faster, and gives immediate feedback. **Rule: use Cloud Build only when CI/CD or team workflows require it.**
+3. **In modern GCP projects, Cloud Build runs under the compute SA** (`[NUM]-compute@developer.gserviceaccount.com`), not `@cloudbuild.gserviceaccount.com`. Needs explicit grants: `artifactregistry.writer`, `run.developer`, and `iam.serviceAccountUser` on itself.
 
-### Multi-platform architecture is an underestimated source of friction
-Development on Apple Silicon (ARM) producing images for Cloud Run (AMD64) caused subtle build failures. **Rule: always specify `--platform linux/amd64` in Dockerfile and buildx commands for Cloud Run deployments.**
+4. **Always pin SDK deps to exact versions** — `notion-client>=2.2.0` silently resolved to v3 at build time, which removed `databases.query()` with no obvious warning in the error.
 
-### Configure MCP integrations before building, not after
-The gcloud MCP server would have given Claude live access to Cloud Run logs from the start. Instead, debugging required manual log pulls and CLI auth token expiry added friction. **Rule: set up gcloud MCP (and Notion MCP) at project start — not mid-debug.**
+5. **Stale database IDs produce 404, not 403** — when Notion databases are recreated, the IDs change. The error looks like a permissions issue but is actually a missing resource. Check IDs before debugging auth.
 
-### IAM and org policy configuration is significant work
-Getting Cloud Run `allUsers` invoker permission required overriding `iam.allowedPolicyMemberDomains` at the project level. Keep a record of the policy override for future projects.
+6. **`--platform=linux/amd64` is only needed locally on Apple Silicon** — passing it in Cloud Build (which runs on amd64 natively) causes exit code 125. Strip it from `cloudbuild.yaml`.
+
+7. **`$PROJECT_ID` is not expanded inside the `substitutions` block** — only in step args. Hardcode the project ID in substitution default values.
+
+### From Previous Sessions
+
+8. **Pin dependency versions before deploying** — floating versions in `requirements.txt` cause runtime failures that are invisible until logs are checked.
+
+9. **Test the delivery mechanism before building features** — validate Cloud Run deploy path with a hello-world container on day 1. Don't write features until the pipeline works.
+
+10. **Multi-platform architecture is an underestimated source of friction** — Apple Silicon development targeting Cloud Run (AMD64) causes subtle build failures. Always specify `--platform linux/amd64` for local builds.
+
+11. **Configure MCP integrations before building, not after** — gcloud MCP would have given live log access from the start. Set up gcloud MCP at project start.
 
 ---
 
 ## 6. Build History
 
-| Date | Session | Outcome |
-|------|---------|---------|
-| 2026-02-22 | Project spec and SKILL.md | SPEC.md, SPEC-SUMMARY.md, initial repo |
-| 2026-02-24 | Google ADK implementation | ADK agent, Notion tools, 4 tests passing |
-| 2026-02-25 | CRUD frontend build | FastAPI + HTMX + Notion client + ADK runner + Dockerfile (9 commits, 34 tests) |
-| 2026-03-02 | Cloud Run deployment | Switched to local buildx, pinned notion-client==2.7.0, service live — 500 under diagnosis |
-| 2026-03-02 | Tooling | Added gcloud MCP server to Claude Code user config |
-
-**Open item:** Root `/` returns 500. Diagnosis unblocked once gcloud MCP loads in next session.
+| Session | Date | Focus | Outcome |
+|---------|------|-------|---------|
+| 1 | 2026-02-24 | Google ADK agent implementation | ADK agent, Notion tools, 4 tests passing |
+| 2 | 2026-02-25 | CRUD frontend (FastAPI + HTMX) | FastAPI + HTMX + Notion client + ADK runner + Dockerfile (9 commits, 34 tests) |
+| 3 | 2026-02-25 | Docker + Cloud Run deployment | Switched to local buildx, service deployed — 500 under diagnosis |
+| 4 | 2026-03-02 | **Cloud Run debugging + deploy pipeline fix** | Service 200, Cloud Build pipeline operational |
 
 ---
 
@@ -99,6 +119,14 @@ Getting Cloud Run `allUsers` invoker permission required overriding `iam.allowed
 
 | Hash | Date | Description |
 |------|------|-------------|
+| a0a65ff | 2026-03-02 | fix: hardcode project ID in cloudbuild.yaml substitution |
+| 9180b75 | 2026-03-02 | fix: remove --platform flag from cloudbuild.yaml |
+| e7e9f5d | 2026-03-02 | fix: add .gcloudignore and cloudbuild.yaml to fix source-based deploys |
+| 94295bd | 2026-03-02 | fix: update all 9 Notion database IDs to match current workspace |
+| d98e5e1 | 2026-03-02 | fix: pin notion-client to 2.2.1 to restore databases.query() |
+| d1d9103 | 2026-03-02 | fix: migrate from databases.query to data_sources.query (reverted) |
+| c01c2ae | 2026-03-02 | fix: pin notion-client to 2.7.0 to avoid v3 breaking API change |
+| 6062bae | 2026-03-02 | docs: add full retrospective for Cloud Run deployment session |
 | 1a6372a | 2026-02-25 | docs: add build journal daily recap for CRUD frontend session |
 | eb493c1 | 2026-02-25 | fix: add build-essential to Dockerfile for C extension compilation |
 | 0bd1366 | 2026-02-25 | feat: add Dockerfile for Cloud Run deployment |
@@ -107,11 +135,5 @@ Getting Cloud Run `allUsers` invoker permission required overriding `iam.allowed
 | bd888f0 | 2026-02-25 | feat: add ADK runner wrapper for quick capture |
 | ed7b3fd | 2026-02-25 | feat: add Notion CRUD client with tests |
 | 453e1dd | 2026-02-25 | deps: add fastapi, jinja2, uvicorn, httpx for CRUD frontend |
-| a18da43 | 2026-02-25 | docs: add CRUD frontend implementation plan |
-| 24ec95d | 2026-02-25 | Add CRUD frontend design doc and Topic Link URL fix |
-| d90743f | 2026-02-24 | docs: add build journal entry for Google ADK implementation |
 | c4f909d | 2026-02-24 | Add Google ADK implementation of Universal Task Capture agent |
 | 2b20b6a | 2026-02-23 | Add SPEC.md and SPEC-SUMMARY.md for HOAI assignment submission |
-| bf5093c | 2026-02-22 | Add test run output with 4 documented test cases |
-| 637f3f5 | 2026-02-16 | Add capture-task skill file to project repo |
-| 3fc3359 | 2026-02-16 | Initial commit: Universal Task and To-Do Capture project |
