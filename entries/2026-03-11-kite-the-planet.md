@@ -4,7 +4,7 @@
 **Builder:** Ben Giordano
 **Build Date:** 2026-03-11
 **Platform:** Next.js 15, TypeScript, Tailwind, Supabase, Vercel
-**Status:** Complete — PR #1 open
+**Status:** Complete — PR #1 merged and deployed
 **Repo:** bengio777/KTP_V01
 **Tier:** Full
 
@@ -241,8 +241,18 @@ The key insight: each signal overrides the previous in priority order, and the s
 - LocaleStep onboarding (Step 0)
 - PR #1 open against main
 
+### Completed in follow-up session (2026-03-12)
+- Applied migration 001 (`exchange_rates` table) via Supabase SQL Editor
+- Migration 002 (`users.locale_code`) deferred — public `users` table doesn't exist yet
+- Set all env vars in `.env.local` and Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `CRON_SECRET`, `OPEN_EXCHANGE_RATES_APP_ID`
+- Resolved `package.json` merge conflict (feature branch deps + main deps combined)
+- Resolved `app/layout.tsx` conflict (LocaleProvider + Travelpayouts script merged)
+- Fixed `CRON_SECRET` trailing newline bug — use `printf "value" | vercel env add` not `<<<`
+- Merged PR #1 — deployed to kitetheplanet.com ✓
+- Weekly exchange rate cron active
+
 ### Remaining
-- Apply Supabase migrations (`001_exchange_rates.sql`, `002_users_locale_code.sql`)
-- Set env vars: `OPEN_EXCHANGE_RATES_APP_ID`, `CRON_SECRET` in Vercel + `.env.local`
-- Merge PR #1
 - Agent prompts: ContentAgent, BrandVoiceAgent, SalesIntelligenceAgent, OperatorOutreachAgent, COO OrchestratorAgent
+- Dakhla design improvements
+- Wire real images to Dakhla spot page
+- Apply `users.locale_code` migration when full schema runs
