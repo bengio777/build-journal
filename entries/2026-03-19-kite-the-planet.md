@@ -74,3 +74,69 @@ brand-ambassadors-enriched.csv (185 riders enriched)
 | e79fbc6 | 2026-03-19 | Complete brand ambassador dataset — 219 riders across all Tier 1-3 brands |
 | fa52144 | 2026-03-19 | Add brand ambassador scraping pipeline and kite-brands.md restructure |
 | 1427f43 | 2026-03-19 | docs: add kite brands reference + ambassador scraper tools |
+
+---
+
+# Session 2: Google Maps Spot Pipeline (A1)
+## Daily Recap — 2026-03-19 (evening)
+
+**Status:** In Progress — A1 complete, A3–B4 queued for next session
+
+---
+
+## Accomplished
+
+Built and ran the full **A1 spot input pipeline** for the KTP Places API data collection system.
+
+**Scraper engineering:**
+- Rewrote `scrape_ktp_list.py` three times to fix selector and coordinate issues:
+  - v1: `a[href*="/maps/place/"]` — wrong (list uses buttons, not links)
+  - v2: `button[aria-label]` — wrong (place buttons have class `SMP2wb`, no aria-label)
+  - v3 final: `.m6QErb.DxyBCb.kA9KIf button.SMP2wb` — confirmed via live MCP DOM inspection
+- Fixed coordinate extraction: `!3d!4d` URL pattern (actual place coords) over `@lat,lng` (map view center, was 78° off)
+- Fixed name extraction: h1 returned the list title "Kite the planet - locations" for every entry — switched to URL path decode
+- Fixed post-`go_back()` click failures: Google Maps only loads ~20 cards on restore — added `wait_for_card_count(page, i+2)` before each click
+
+**Data pipeline:**
+- Scraped all 186 entries from the shared list → `data/spots-input.csv`
+- Ran junk review (full 186-entry table, reviewed in batches of 10)
+- Removed 7 junk entries (airport, waterfalls, Berlin street, hotel branding, state monument, admin region, cafe)
+- Extracted 12 operator entries → `data/operators-raw.csv`; replaced with nearest beach spots where not covered
+- Added 4 new beach spots: Sorobon Beach (Bonaire), Ninh Chu/Phan Rang (Vietnam), Caribbean Colombia Coast, North Queensland/Cape Flattery
+- Kept 2 broad destination zones (Cocos Keeling, Rodrigues) per Dakhla multi-launch-area precedent
+- Renamed parking lot entry to "Praia de Foz do Lizandro"
+
+**Final output:** 171 curated kite spots with lat/lng and Google Maps URLs
+
+---
+
+## Open Items
+
+- Caribbean Colombia Coast (10.87, -75.1) — exact beach name needs geo research
+- North Queensland / Cape Flattery (-15.23, 145.26) — remote FNQ, needs ground truth
+
+---
+
+## Next Session
+
+Run order (all scripts in `tools/gmaps-scraper/`):
+1. `python3 scrape_iko.py` — IKO school directory (A3)
+2. `python3 discover_new_spots.py` — gap-fill from IKO + OSM (A5)
+3. `python3 scrape_kite_schools.py` — Google Maps UI schools (A4) → `data/gmaps-schools.csv`
+4. `python3 consolidate_schools.py` — merge → `data/schools-master.csv` (A6)
+5. Restrict API key to Places API only in GCP console
+6. `python3 search_nearby.py --category [schools|gear|accommodation]` (B1–B3)
+7. `python3 fetch_place_details.py` (B4)
+
+---
+
+## Commits
+
+| Hash | Date | Description |
+|------|------|-------------|
+| 3daf5a1 | 2026-03-19 | feat(gmaps-scraper): complete A1 spot pipeline — 171 curated kite spots |
+| e35e048 | 2026-03-19 | phase 5d: multi-engine discovery + Jesse Richman + bio parser fix |
+| 079340f | 2026-03-19 | phase 5c: Red Bull athlete roster — Robby Naish + Tom Bridge |
+| 4d6a5aa | 2026-03-19 | feat: Phase 5a — GKA profile scraper + handle enrichment |
+| 681477b | 2026-03-19 | Add brand positioning analysis to competitive docs |
+| ca2219c | 2026-03-19 | Add 5-year growth projections with four scenario tracks |
